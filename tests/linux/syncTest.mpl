@@ -5,13 +5,16 @@
 # It is forbidden to use the content or any part of it for any purpose without explicit permission from the owner.
 # By contributing to the repository, contributors acknowledge that ownership of their work transfers to the owner.
 
+"Span.toSpan"      use
 "String.String"    use
 "String.printList" use
 "String.toString"  use
 "algorithm.="      use
 "control.&&"       use
 "control.Natx"     use
-"control.ensure"   use
+"control.Nat8"     use
+"control.Int32"    use
+# "control.ensure"   use
 "control.failProc" use
 "control.times"    use
 "control.when"     use
@@ -19,6 +22,8 @@
 
 "posix.EAGAIN"      use
 "posix.EWOULDBLOCK" use
+"posix.pipe"        use
+"posix.write"       use
 "socket.send"       use
 
 "errno.errno" use
@@ -30,6 +35,7 @@
 "sync/sync.listenTcp"    use
 "sync/sync.spawn"        use
 "sync/sync.yield"        use
+"sync/sync.asyncRead"    use
 
 syncTest: [];
 
@@ -78,6 +84,13 @@ fillUpSocketSendBuffer: [
 
   lastErrorNumber: errno;
   lastErrorNumber EAGAIN = ~ [lastErrorNumber EWOULDBLOCK = ~] && [("send failed, result=" lastErrorNumber) printList "" failProc] when
+];
+
+writeSpan: [
+  filedes: data: toSpan;;
+  result: data.size Natx cast data.data storageAddress filedes write;
+  result -1ix = [("writeSpan failed, result=" errno LF) printList "" failProc] when
+  result
 ];
 
 # Test that write does not block when read is canceled on the same fd
@@ -158,4 +171,34 @@ fillUpSocketSendBuffer: [
   message: 1024 @client.readString !result;
   result "" = ~ [("TcpConnection.readString failed, " result LF) printList "" failProc] when
   message "Hello, World!" = ~ [("client received unexpected response, \"" message "\"\n") printList "" failProc] when
+] call
+
+
+# Test asyncRead waits input non-blocking
+[
+  pipefd: {in: Int32; out: Int32;};
+  @pipefd pipe 0 = ~ [("failed to create pipe, result=" errno LF) printList "" failProc] when
+  readyToRead: FALSE;
+
+  context: {
+    readfd: pipefd.in;
+    readyToRead: @readyToRead;
+    CALL: [
+      buffer: Nat8 10 array;
+      TRUE @readyToRead set
+      readCount: 10nx buffer storageAddress pipefd.in asyncRead;
+      readCount 4ix = ~ [("expected readCount: " readCount LF) printList "" failProc] when
+        ("readyToRead: " readyToRead LF) printList
+      message: buffer toSpan.stringView;
+      message "Hello" = ~ ["received unexpected message, \"" message "\"" LF] when
+      FALSE @readyToRead set
+    ];
+  } () spawn;
+  readyToRead FALSE = ~ [("expected not ready to read" LF) printList "" failProc] when
+  yield
+  readyToRead TRUE = ~ [("expected ready to read" LF) printList "" failProc] when
+  writeCount: pipefd.out "Hello" writeSpan;
+  writeCount 4ix = ~ [("unexpected write count " writeCount LF) printList "" failProc] when
+  yield
+  readyToRead FALSE = ~ [("expected not ready to read" LF) printList "" failProc] when
 ] call
